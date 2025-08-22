@@ -175,7 +175,7 @@ def calculate_yoy(df):
 
 # --- Streamlit UIの定義 ---
 st.set_page_config(page_title="多機能ツール", layout="wide")
-st.info("バージョン5.0：2つのツールを完全に独立させて表示しています。")
+
 st.title("📄📊 多機能ツール")
 st.write("PDFからのデータ抽出と、Excelデータの統合・分析をそれぞれ独立して行えます。")
 
@@ -248,3 +248,4 @@ with st.container(border=True):
                             st.dataframe(df_yoy_result.style.format(precision=2, na_rep='-'))
             else:
                 st.warning("統合できるデータが見つかりませんでした。ファイルの内容を確認してください。", icon="⚠️")
+
