@@ -174,7 +174,7 @@ def process_files_and_tables(excel_file):
 
 # --- Streamlit UIの定義 ---
 st.set_page_config(page_title="多機能ツール", layout="wide")
-st.info("v9.0：ツール②の年号認識を4桁の数字（例: 2024）のみに固定化しました。")
+
 st.title("📄📊 多機能ツール")
 st.write("PDFからのデータ抽出と、Excelデータの統合・分析をそれぞれ独立して行えます。")
 
@@ -227,3 +227,4 @@ with st.container(border=True):
                             df_yoy_result = tool2_calculate_yoy(summary_df)
                             st.dataframe(df_yoy_result.style.format(precision=2, na_rep='-'))
             elif all_summaries is not None: st.warning("統合できるデータが見つかりませんでした。ファイルの内容を確認してください。", icon="⚠️")
+
