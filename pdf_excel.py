@@ -144,13 +144,15 @@ def calculate_yoy(df):
 def process_extracted_data(df_full):
     """
     抽出されたDataFrameを受け取り、統合まとめ表を作成する
-    （ファイル読み込み部分を削除し、DataFrameを直接受け取るように変更）
     """
     if df_full is None or df_full.empty:
         st.error("処理対象のデータがありません。")
         return None
 
+    # 1列目がすべてNaNの行を削除（Excelの空行対策）
+    df_full = df_full.dropna(subset=[0], how='all')
     df_full[0] = df_full[0].astype(str)
+    
     file_indices = df_full[df_full[0].str.contains(r'ファイル名:', na=False)].index.tolist()
     file_chunks = []
     if not file_indices:
@@ -165,24 +167,17 @@ def process_extracted_data(df_full):
     master_item_order = defaultdict(list)
 
     for file_chunk in file_chunks:
-        # '--- ページ' を含む行のインデックスを取得し、それを元に表を分割
         page_indices = file_chunk[file_chunk[0].str.contains(r'--- ページ', na=False)].index.tolist()
-        
-        # 表の塊（チャンク）を格納するリスト
         table_chunks = []
         if not page_indices:
-            # ページ区切りがない場合は、ファイル全体を一つの塊として扱う
-            # （ファイル名ヘッダーなどを除外）
             clean_chunk = file_chunk[~file_chunk[0].str.contains(r'ファイル名:|---|^\s*$', na=False, regex=True)].dropna(how='all')
             if not clean_chunk.empty:
                 table_chunks.append(clean_chunk)
         else:
-            # ページ区切りで分割
             last_end_idx = 0
             for i in range(len(page_indices)):
                 start_idx = page_indices[i]
                 end_idx = page_indices[i+1] if i+1 < len(page_indices) else len(file_chunk)
-                # 表データのみを抽出（ヘッダー行の次から次のヘッダー行の前まで）
                 chunk = file_chunk.iloc[start_idx + 1:end_idx]
                 clean_chunk = chunk[~chunk[0].str.contains(r'ファイル名:|---|^\s*$', na=False, regex=True)].dropna(how='all')
                 if not clean_chunk.empty:
@@ -232,121 +227,139 @@ def process_extracted_data(df_full):
 st.set_page_config(page_title="PDFデータ抽出・統合分析ツール", layout="wide")
 st.title("📄 PDFデータ抽出・統合分析ツール 📊")
 st.write("PDFからキーワードで表を抽出し、複数のファイルから同じ順番の表を統合・分析します。")
-st.divider()
 
 # --- セッション状態の初期化 ---
 if 'extracted_data' not in st.session_state:
     st.session_state.extracted_data = None
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
-if 'pdf_file_names' not in st.session_state:
-    st.session_state.pdf_file_names = "data"
+if 'file_names' not in st.session_state:
+    st.session_state.file_names = "data"
 
 
 # --- ステップ1: PDFからのデータ抽出 ---
-st.header("ステップ1: PDFから表データを抽出")
+st.header("ステップ1: PDFから表データを抽出（必要な場合）")
+with st.expander("PDFから抽出する", expanded=False):
+    with st.container(border=True):
+        uploaded_files = st.file_uploader(
+            "PDFファイルをアップロード（複数選択可）",
+            type="pdf",
+            accept_multiple_files=True
+        )
+        keyword = st.text_input("検索キーワードを入力", placeholder="例: 発行済株式")
+        col1, col2 = st.columns(2)
+        with col1:
+            start_page_input = st.text_input("開始ページ", placeholder="未入力の場合は全ページ")
+        with col2:
+            end_page_input = st.text_input("終了ページ", placeholder="未入力の場合は最後まで")
 
-with st.container(border=True):
-    uploaded_files = st.file_uploader(
-        "PDFファイルをアップロード（複数選択可）",
-        type="pdf",
-        accept_multiple_files=True
-    )
-    keyword = st.text_input("検索キーワードを入力", placeholder="例: 発行済株式")
-    col1, col2 = st.columns(2)
-    with col1:
-        start_page_input = st.text_input("開始ページ", placeholder="未入力の場合は全ページ")
-    with col2:
-        end_page_input = st.text_input("終了ページ", placeholder="未入力の場合は最後まで")
+        if st.button("抽出開始 ▶️", type="primary"):
+            start_page = int(start_page_input) if start_page_input.isdigit() else None
+            end_page = int(end_page_input) if end_page_input.isdigit() else None
 
-    if st.button("抽出開始 ▶️", type="primary"):
-        start_page = int(start_page_input) if start_page_input.isdigit() else None
-        end_page = int(end_page_input) if end_page_input.isdigit() else None
+            if uploaded_files:
+                with st.spinner("PDFを解析中..."):
+                    df_result = extract_tables_from_multiple_pdfs(uploaded_files, keyword, start_page, end_page)
+                    st.session_state.extracted_data = df_result
+                    st.session_state.analysis_results = None # 新しい抽出なので分析結果をリセット
+                    if df_result is not None and not df_result.empty:
+                        st.session_state.file_names = "_".join([f.name.split('.')[0] for f in uploaded_files])
+                        st.success("✅ 抽出が完了しました！ステップ2で結果を利用できます。")
+                    else:
+                        st.warning("指定された条件で抽出できるデータが見つかりませんでした。")
+            else:
+                st.error("❗ PDFファイルをアップロードしてください。")
+st.divider()
 
-        if uploaded_files:
-            with st.spinner("PDFを解析中..."):
-                df_result = extract_tables_from_multiple_pdfs(uploaded_files, keyword, start_page, end_page)
-                st.session_state.extracted_data = df_result
-                st.session_state.analysis_results = None # 新しい抽出なので分析結果をリセット
-                if df_result is not None and not df_result.empty:
-                    st.session_state.pdf_file_names = "_".join([f.name.split('.')[0] for f in uploaded_files])
-                    st.success("✅ 抽出が完了しました！下にプレビューと分析ステップが表示されます。")
-                else:
-                    st.warning("指定された条件で抽出できるデータが見つかりませんでした。")
+# --- ステップ2: 統合まとめ表の作成・分析 ---
+st.header("ステップ2: 統合データを作成・分析")
+st.write("PDFの抽出結果、または手元のExcelファイルを使って、統合まとめ表を作成・分析します。")
+
+col_a, col_b = st.columns(2)
+
+# --- オプションA: ステップ1の結果を使う ---
+with col_a:
+    with st.container(border=True):
+        st.subheader("オプションA: ステップ1の結果を使う")
+        if st.session_state.extracted_data is not None:
+            st.success("✅ ステップ1の抽出データが読み込まれています。")
+            st.dataframe(st.session_state.extracted_data.head(5))
         else:
-            st.error("❗ PDFファイルをアップロードしてください。")
+            st.info("ステップ1でデータを抽出すると、ここに結果が表示され、下のボタンが有効になります。")
 
-# --- 抽出結果の表示とステップ2への誘導 ---
-if st.session_state.extracted_data is not None:
-    st.subheader("抽出結果プレビュー")
-    st.dataframe(st.session_state.extracted_data.head(20)) # 長い場合に備えて先頭のみ表示
+        if st.button("ステップ1の結果で統合表を作成 ▶️", disabled=(st.session_state.extracted_data is None)):
+            with st.spinner("データを整理・分析中..."):
+                all_summaries = process_extracted_data(st.session_state.extracted_data)
+                st.session_state.analysis_results = all_summaries
 
-    # 抽出結果ダウンロード
-    output_excel_extracted = io.BytesIO()
-    with pd.ExcelWriter(output_excel_extracted, engine='xlsxwriter') as writer:
-        st.session_state.extracted_data.to_excel(writer, index=False, header=False, sheet_name='抽出結果')
+# --- オプションB: Excelファイルをアップロード ---
+with col_b:
+    with st.container(border=True):
+        st.subheader("オプションB: Excelファイルをアップロード")
+        uploaded_excel_file = st.file_uploader(
+            "処理したいExcelファイル（.xlsx）をアップロード",
+            type=["xlsx"],
+        )
+        if st.button("Excelで統合表を作成 ▶️", disabled=(uploaded_excel_file is None)):
+            if uploaded_excel_file:
+                with st.spinner("Excelを読み込み、データを整理・分析中..."):
+                    try:
+                        # "抽出結果"シートがあればそれを、なければ最初のシートを読む
+                        xls = pd.ExcelFile(uploaded_excel_file)
+                        sheet_name_to_read = "抽出結果" if "抽出結果" in xls.sheet_names else xls.sheet_names[0]
+                        df_from_excel = pd.read_excel(xls, sheet_name=sheet_name_to_read, header=None)
 
-    st.download_button(
-        label="📥 抽出結果全体をExcelでダウンロード",
-        data=output_excel_extracted.getvalue(),
-        file_name=f"{keyword}_抽出結果.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+                        st.session_state.file_names = uploaded_excel_file.name.split('.')[0]
+                        all_summaries = process_extracted_data(df_from_excel)
+                        st.session_state.analysis_results = all_summaries
+                    except Exception as e:
+                        st.error(f"Excelファイルの処理中にエラーが発生しました: {e}")
 
-    st.divider()
+st.divider()
 
-    # --- ステップ2: 統合まとめ表の作成・分析 ---
-    st.header("ステップ2: 統合データを作成・分析")
-    st.write("抽出結果から、複数のPDFにまたがる同じ順番の表を一つにまとめ、分析します。")
+# --- 分析結果の表示 ---
+if st.session_state.analysis_results is not None:
+    st.header("📊 分析結果")
+    if st.session_state.analysis_results:
+        st.success(f"✅ {len(st.session_state.analysis_results)}個の統合まとめ表が作成されました！")
 
-    if st.button("統合まとめ表を作成 ▶️", type="primary"):
-        with st.spinner("データを整理・分析中..."):
-            all_summaries = process_extracted_data(st.session_state.extracted_data)
-            st.session_state.analysis_results = all_summaries
-
-    # --- 分析結果の表示 ---
-    if st.session_state.analysis_results is not None:
-        if st.session_state.analysis_results:
-            st.success(f"✅ {len(st.session_state.analysis_results)}個の統合まとめ表が作成されました！")
-
-            # 統合結果一括ダウンロード
-            output_excel_summary = io.BytesIO()
-            with pd.ExcelWriter(output_excel_summary, engine="xlsxwriter") as writer:
-                for i, summary_df in enumerate(st.session_state.analysis_results):
-                    summary_df.to_excel(writer, sheet_name=f"統合まとめ表_{i+1}", index=False)
-
-            st.download_button(
-                label="📥 全ての統合まとめ表をExcelで一括ダウンロード",
-                data=output_excel_summary.getvalue(),
-                file_name=f"統合まとめ表_{st.session_state.pdf_file_names}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-            st.divider()
-
-            # 各まとめ表の詳細表示
+        # 統合結果一括ダウンロード
+        output_excel_summary = io.BytesIO()
+        with pd.ExcelWriter(output_excel_summary, engine="xlsxwriter") as writer:
             for i, summary_df in enumerate(st.session_state.analysis_results):
-                with st.expander(f"▼ **統合まとめ表 {i+1}** の詳細と分析結果を見る"):
-                    tab1, tab2, tab3 = st.tabs(["📊 整理後データ", "📈 推移グラフ", "🆚 前年比・増減"])
+                summary_df.to_excel(writer, sheet_name=f"統合まとめ表_{i+1}", index=False)
 
-                    with tab1:
-                        st.dataframe(summary_df)
+        st.download_button(
+            label="📥 全ての統合まとめ表をExcelで一括ダウンロード",
+            data=output_excel_summary.getvalue(),
+            file_name=f"統合まとめ表_{st.session_state.file_names}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        
+        # 各まとめ表の詳細表示
+        for i, summary_df in enumerate(st.session_state.analysis_results):
+            with st.expander(f"▼ **統合まとめ表 {i+1}** の詳細と分析結果を見る", expanded=True):
+                tab1, tab2, tab3 = st.tabs(["📊 整理後データ", "📈 推移グラフ", "🆚 前年比・増減"])
 
-                    with tab2:
-                        st.subheader("主要項目の年度推移グラフ")
-                        df_for_chart = summary_df.copy()
-                        df_for_chart['共通項目'] = df_for_chart['共通項目'].str.replace(r'_temp_\d+$', '', regex=True)
-                        df_for_chart = df_for_chart.groupby('共通項目', sort=False).sum()
-                        items = df_for_chart.index.tolist()
-                        default_items = [item for item in ["売上高", "営業利益", "経常利益", "当期純利益"] if item in items]
-                        selected_items = st.multiselect(
-                            "グラフに表示する項目を選択", options=items, default=default_items, key=f"chart_{i}"
-                        )
-                        if selected_items:
-                            st.line_chart(df_for_chart.loc[selected_items].T)
+                with tab1:
+                    st.dataframe(summary_df)
 
-                    with tab3:
-                        st.subheader("前年比・増減額")
-                        df_yoy_result = calculate_yoy(summary_df)
-                        st.dataframe(df_yoy_result.style.format(precision=2, na_rep='-'))
-        else:
-            st.warning("統合できるデータが見つかりませんでした。抽出されたデータに年号（例: 2023）が含まれているか、表の構造が正しいかを確認してください。")
+                with tab2:
+                    st.subheader("主要項目の年度推移グラフ")
+                    df_for_chart = summary_df.copy()
+                    df_for_chart['共通項目'] = df_for_chart['共通項目'].str.replace(r'_temp_\d+$', '', regex=True)
+                    df_for_chart = df_for_chart.groupby('共通項目', sort=False).sum()
+                    items = df_for_chart.index.tolist()
+                    default_items = [item for item in ["売上高", "営業利益", "経常利益", "当期純利益"] if item in items]
+                    selected_items = st.multiselect(
+                        "グラフに表示する項目を選択", options=items, default=default_items, key=f"chart_{i}"
+                    )
+                    if selected_items:
+                        st.line_chart(df_for_chart.loc[selected_items].T)
+
+                with tab3:
+                    st.subheader("前年比・増減額")
+                    df_yoy_result = calculate_yoy(summary_df)
+                    st.dataframe(df_yoy_result.style.format(precision=2, na_rep='-'))
+    else:
+        st.warning("統合できるデータが見つかりませんでした。データに年号（例: 2023）が含まれているか、表の構造が正しいかを確認してください。")
