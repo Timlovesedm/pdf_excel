@@ -5,7 +5,7 @@ import io
 import re
 from collections import defaultdict
 
-# --- 機能①：PDFからデータを抽出する関数 ---
+# --- ツール①：PDFからデータを抽出する関数 ---
 def extract_tables_from_multiple_pdfs(pdf_files, keyword, start_page, end_page):
     all_rows = []
     if not keyword:
@@ -40,85 +40,8 @@ def extract_tables_from_multiple_pdfs(pdf_files, keyword, start_page, end_page):
     if not any(r for r in all_rows if r): return None
     return pd.DataFrame(all_rows)
 
-# --- 機能②：統合データを作成する関数群 ---
-def process_excel_data(excel_file):
-    try:
-        xls = pd.ExcelFile(excel_file)
-        sheet_name = "抽出結果" if "抽出結果" in xls.sheet_names else xls.sheet_names[0]
-        df_full = pd.read_excel(xls, sheet_name=sheet_name, header=None)
-        if df_full.empty:
-            st.warning("Excelファイルが空か、読み取るシートにデータがありません。", icon="⚠️")
-            return []
-    except Exception as e:
-        st.error(f"Excelファイルの読み込みに失敗しました: {e}", icon="🔥")
-        return []
-
-    # --- データ分割ロジック ---
-    df_full = df_full.dropna(how='all').reset_index(drop=True)
-    df_full[0] = df_full[0].astype(str)
-    file_indices = df_full[df_full[0].str.contains(r'ファイル名:', na=False)].index.tolist()
-    file_chunks = []
-    if not file_indices:
-        file_chunks.append(df_full)
-    else:
-        for i in range(len(file_indices)):
-            start_idx = file_indices[i]
-            end_idx = file_indices[i+1] if i + 1 < len(file_indices) else len(df_full)
-            file_chunks.append(df_full.iloc[start_idx:end_idx])
-
-    # --- 表のグループ化と統合 ---
-    grouped_tables = defaultdict(list)
-    master_item_order = defaultdict(list)
-    for file_chunk in file_chunks:
-        page_indices = file_chunk[file_chunk[0].str.contains(r'--- ページ', na=False)].index.tolist()
-        table_chunks = []
-        if not page_indices:
-            clean_chunk = file_chunk[~file_chunk[0].str.contains(r'ファイル名:|---', na=False, regex=True)].dropna(how='all')
-            if not clean_chunk.empty: table_chunks.append(clean_chunk)
-        else:
-            for i in range(len(page_indices)):
-                start_idx = page_indices[i]
-                end_idx = page_indices[i+1] if i + 1 < len(page_indices) else len(file_chunk)
-                chunk = file_chunk.iloc[start_idx - file_chunk.index[0] + 1 : end_idx - file_chunk.index[0]]
-                clean_chunk = chunk.dropna(how='all')
-                if not clean_chunk.empty: table_chunks.append(clean_chunk)
-        
-        for i, table_chunk in enumerate(table_chunks):
-            processed_df, item_order = extract_data_from_chunk(table_chunk.reset_index(drop=True))
-            if processed_df is not None and not processed_df.empty:
-                grouped_tables[i].append(processed_df)
-                current_master_order = master_item_order[i]
-                if not current_master_order:
-                    master_item_order[i].extend(item_order)
-                else:
-                    last_known_index = -1
-                    for item in item_order:
-                        if item in current_master_order:
-                            last_known_index = current_master_order.index(item)
-                        else:
-                            current_master_order.insert(last_known_index + 1, item)
-                            last_known_index += 1
-    # --- 最終的なデータフレームの組み立て ---
-    final_summaries = []
-    for table_index in sorted(grouped_tables.keys()):
-        list_of_dfs = grouped_tables[table_index]
-        ordered_items = master_item_order[table_index]
-        if not list_of_dfs: continue
-        result_df = pd.DataFrame({'共通項目': ordered_items})
-        for df_to_merge in list_of_dfs:
-            cols_to_drop = [col for col in df_to_merge.columns if col in result_df.columns and col != '共通項目']
-            df_filtered = df_to_merge.drop(columns=cols_to_drop)
-            result_df = pd.merge(result_df, df_filtered, on='共通項目', how='left')
-        result_df.fillna(0, inplace=True)
-        year_cols = sorted([col for col in result_df.columns if str(col).isdigit()], key=int)
-        final_cols = ['共通項目'] + year_cols
-        result_df = result_df[final_cols]
-        for col in year_cols: result_df[col] = result_df[col].astype(int)
-        result_df['共通項目'] = result_df['共通項目'].str.replace(r'_temp_\d+$', '', regex=True)
-        final_summaries.append(result_df)
-    return final_summaries
-
-def extract_data_from_chunk(df_chunk):
+# --- ツール②：統合データを作成する関数群（元の独立アプリのロジックをそのまま使用）---
+def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty: return None, []
     year_pat = re.compile(r"^\s*20\d{2}\s*$")
     year_cells = []
@@ -156,7 +79,7 @@ def extract_data_from_chunk(df_chunk):
         df_result = pd.merge(df_result, temp_df, on='共通項目', how='left')
     return df_result, all_items_ordered
 
-def calculate_yoy(df):
+def tool2_calculate_yoy(df):
     df_yoy = df.set_index("共通項目")
     df_yoy.index = df_yoy.index.str.replace(r'_temp_\d+$', '', regex=True)
     df_yoy = df_yoy.groupby(df_yoy.index, sort=False).sum()
@@ -173,9 +96,91 @@ def calculate_yoy(df):
         if f"{year} 増減率(%)" in df_merged.columns: sorted_cols.append(f"{year} 増減率(%)")
     return df_merged[sorted_cols].reset_index()
 
+def process_files_and_tables(excel_file):
+    try:
+        xls = pd.ExcelFile(excel_file)
+        sheet_name_to_read = "抽出結果" if "抽出結果" in xls.sheet_names else xls.sheet_names[0]
+        df_full = pd.read_excel(xls, sheet_name=sheet_name_to_read, header=None)
+    except Exception as e:
+        st.error(f"Excelファイルの読み込みに失敗しました: {e}")
+        return None
+    
+    df_full[0] = df_full[0].astype(str)
+    file_indices = df_full[df_full[0].str.contains(r'ファイル名:', na=False)].index.tolist()
+    file_chunks = []
+    if not file_indices:
+        file_chunks.append(df_full)
+    else:
+        for i in range(len(file_indices)):
+            start_idx = file_indices[i]
+            end_idx = file_indices[i+1] if i + 1 < len(file_indices) else len(df_full)
+            file_chunks.append(df_full.iloc[start_idx:end_idx].reset_index(drop=True))
+
+    grouped_tables = defaultdict(list)
+    master_item_order = defaultdict(list)
+
+    for file_chunk in file_chunks:
+        page_indices = file_chunk[file_chunk[0].str.contains(r'--- ページ', na=False)].index.tolist()
+        table_chunks = []
+        last_idx = 0
+        # ページ区切りが見つからない場合はファイル全体を一つの塊として扱う
+        if not page_indices:
+             clean_chunk = file_chunk[~file_chunk[0].str.contains(r'ファイル名:|---|^\s*$', na=False, regex=True)].dropna(how='all')
+             if not clean_chunk.empty:
+                 table_chunks.append(clean_chunk)
+        else:
+            # ページ区切りで分割する
+            for idx in page_indices:
+                chunk = file_chunk.iloc[last_idx:idx]
+                if not chunk.empty:
+                    table_chunks.append(chunk)
+                last_idx = idx
+            final_chunk = file_chunk.iloc[last_idx:]
+            if not final_chunk.empty:
+                table_chunks.append(final_chunk)
+        
+        for i, table_chunk in enumerate(table_chunks):
+            # ヘッダー行などを除外
+            clean_table_chunk = table_chunk[~table_chunk[0].str.contains(r'ファイル名:|---|--- ページ', na=False, regex=True)].dropna(how='all')
+            if clean_table_chunk.empty: continue
+
+            processed_df, item_order = tool2_extract_data_from_chunk(clean_table_chunk.reset_index(drop=True))
+            if processed_df is not None and not processed_df.empty:
+                grouped_tables[i].append(processed_df)
+                current_master_order = master_item_order[i]
+                if not current_master_order:
+                    master_item_order[i].extend(item_order)
+                else:
+                    last_known_index = -1
+                    for item in item_order:
+                        if item in current_master_order:
+                            last_known_index = current_master_order.index(item)
+                        else:
+                            current_master_order.insert(last_known_index + 1, item)
+                            last_known_index += 1
+    
+    final_summaries = []
+    for table_index in sorted(grouped_tables.keys()):
+        list_of_dfs = grouped_tables[table_index]
+        ordered_items = master_item_order[table_index]
+        if not list_of_dfs: continue
+        result_df = pd.DataFrame({'共通項目': ordered_items})
+        for df_to_merge in list_of_dfs:
+            cols_to_drop = [col for col in df_to_merge.columns if col in result_df.columns and col != '共通項目']
+            df_filtered = df_to_merge.drop(columns=cols_to_drop)
+            result_df = pd.merge(result_df, df_filtered, on='共通項目', how='left')
+        result_df.fillna(0, inplace=True)
+        year_cols = sorted([col for col in result_df.columns if str(col).isdigit()], key=int)
+        final_cols = ['共通項目'] + year_cols
+        result_df = result_df[final_cols]
+        for col in year_cols: result_df[col] = result_df[col].astype(int)
+        result_df['共通項目'] = result_df['共通項目'].str.replace(r'_temp_\d+$', '', regex=True)
+        final_summaries.append(result_df)
+    return final_summaries
+
 # --- Streamlit UIの定義 ---
 st.set_page_config(page_title="多機能ツール", layout="wide")
-
+st.info("v6.0：ツール②のロジックを元の独立アプリのものに復元しました。")
 st.title("📄📊 多機能ツール")
 st.write("PDFからのデータ抽出と、Excelデータの統合・分析をそれぞれ独立して行えます。")
 
@@ -219,7 +224,7 @@ with st.container(border=True):
 
     if st.button("統合まとめ表を作成 ▶️", key="excel_process_button", disabled=(excel_file is None)):
         with st.spinner("データを整理・分析中..."):
-            all_summaries = process_excel_data(excel_file)
+            all_summaries = process_files_and_tables(excel_file) # 元の関数を呼び出す
             if all_summaries:
                 st.success(f"{len(all_summaries)}個の統合まとめ表が作成されました！", icon="✅")
                 output_excel = io.BytesIO()
@@ -244,8 +249,7 @@ with st.container(border=True):
                             selected_items = st.multiselect("グラフ表示項目", options=df_for_chart.index.tolist(), default=default_items, key=f"chart_{i}")
                             if selected_items: st.line_chart(df_for_chart.loc[selected_items].T)
                         with tab3:
-                            df_yoy_result = calculate_yoy(summary_df)
+                            df_yoy_result = tool2_calculate_yoy(summary_df)
                             st.dataframe(df_yoy_result.style.format(precision=2, na_rep='-'))
-            else:
+            elif all_summaries is not None:
                 st.warning("統合できるデータが見つかりませんでした。ファイルの内容を確認してください。", icon="⚠️")
-
