@@ -213,10 +213,9 @@ def process_files_and_tables(excel_file):
                 result_df, df_to_merge.drop(columns=cols_to_drop), on="共通項目", how="left"
             )
         result_df.fillna(0, inplace=True)
-        # YYYY/MM 形式もソート対象にする
         year_cols = sorted(
             [col for col in result_df.columns if col != "共通項目"],
-            key=lambda x: int(str(x).replace('/', '').ljust(6, '0')) # YYYY/MM -> YYYYMM, YYYY -> YYYY00 としてソート
+            key=lambda x: int(str(x).replace('/', '').ljust(6, '0'))
         )
         final_cols = ["共通項目"] + year_cols
         result_df = result_df[final_cols]
@@ -262,10 +261,19 @@ with st.container(border=True):
                         for idx, val in enumerate(df_result[0]):
                             if isinstance(val, str) and val.startswith("ファイル名:"):
                                 worksheet.set_row(idx, None, bold_format)
+                    
+                    # --- ここからファイル名修正 ---
+                    if keywords:
+                        base_name = '_'.join(keywords)
+                        download_filename = f"{base_name}_まとめ.xlsx"
+                    else:
+                        download_filename = "抽出結果_まとめ.xlsx"
+                    # --- ここまでファイル名修正 ---
+
                     st.download_button(
                         label="📥 Excelファイルをダウンロード",
                         data=output.getvalue(),
-                        file_name="複数キーワード_抽出結果.xlsx",
+                        file_name=download_filename, # ← ファイル名修正
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
         else:
@@ -288,9 +296,19 @@ with st.container(border=True):
                         summary_df.to_excel(
                             writer, sheet_name=f"統合まとめ表_{i+1}", index=False
                         )
+
+                # --- ここからファイル名修正 ---
+                base_name_input = excel_file.name.rsplit('.xlsx', 1)[0]
+                if base_name_input.endswith('_まとめ'):
+                    base_name_output = base_name_input.removesuffix('_まとめ') + '_統合'
+                else:
+                    base_name_output = base_name_input + '_統合'
+                download_filename = f"{base_name_output}.xlsx"
+                # --- ここまでファイル名修正 ---
+
                 st.download_button(
                     label="📥 統合まとめ表をダウンロード",
                     data=output_excel.getvalue(),
-                    file_name=f"統合まとめ表_{excel_file.name}",
+                    file_name=download_filename, # ← ファイル名修正
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
