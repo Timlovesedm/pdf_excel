@@ -44,21 +44,36 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
     return pd.DataFrame(all_rows)
 
 
-# --- ツール②：統合データ作成関数（認識した年月の文字列をそのまま使用）---
+# --- ツール②：統合データ作成関数（応用：YYYY年MM月 形式にも対応）---
 def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty:
         return None, []
-    # 2024 (4桁) または 202401 (6桁) の両方を認識
+    
+    # パターン①：(YYYY年MM月... 形式を認識
+    date_pat = re.compile(r"\((\d{4})年(\d{1,2})月") 
+    # パターン②：2024 (4桁) または 202401 (6桁) の数値を認識
     year_pat = re.compile(r"^\s*20\d{2}(\d{2})?\s*$")
+
     year_cells = []
     for r in range(df_chunk.shape[0]):
         for c in range(df_chunk.shape[1]):
             cell_value = str(df_chunk.iat[r, c]).strip()
-            if cell_value.isdigit():
-                if year_pat.match(cell_value):
-                    # 認識した文字列をそのままヘッダーとして使用する
-                    year_header = cell_value
-                    year_cells.append({"row": r, "col": c, "year_header": year_header})
+            year_header = None # 見つかったヘッダーを格納する変数
+
+            # まずパターン①（YYYY年MM月）を探す
+            match = date_pat.search(cell_value)
+            if match:
+                year = match.group(1)  # "2021"
+                month = match.group(2) # "12"
+                year_header = f"{year}/{month}" # "2021/12" という文字列を作成
+            
+            # パターン①で見つからなければ、次にパターン②（4桁/6桁の数値）を探す
+            elif cell_value.isdigit() and year_pat.match(cell_value):
+                year_header = cell_value
+
+            # ヘッダーが見つかった場合のみリストに追加
+            if year_header:
+                year_cells.append({"row": r, "col": c, "year_header": year_header})
 
     if not year_cells:
         return None, []
@@ -106,8 +121,7 @@ def tool2_calculate_yoy(df):
     df_pct = df_yoy.pct_change(axis=1) * 100
     df_pct.columns = [f"{col} 増減率(%)" for col in df_pct.columns]
     df_merged = pd.concat([df_yoy, df_diff, df_pct], axis=1)
-    # 文字列の列名を数値としてソート
-    year_cols = sorted([col for col in df_yoy.columns if str(col).isdigit()], key=int)
+    year_cols = sorted([col for col in df_yoy.columns if isinstance(col, (int, str)) and str(col).replace('/', '').isdigit()], key=lambda x: int(str(x).replace('/', '')))
     sorted_cols = []
     for year in year_cols:
         sorted_cols.append(year)
@@ -199,15 +213,15 @@ def process_files_and_tables(excel_file):
                 result_df, df_to_merge.drop(columns=cols_to_drop), on="共通項目", how="left"
             )
         result_df.fillna(0, inplace=True)
-        # 列名が文字列の数字になったため、数値として正しくソートするよう変更
+        # YYYY/MM 形式もソート対象にする
         year_cols = sorted(
-            [col for col in result_df.columns if str(col).isdigit() and col != "共通項目"],
-            key=int,
+            [col for col in result_df.columns if col != "共通項目"],
+            key=lambda x: int(str(x).replace('/', '').ljust(6, '0')) # YYYY/MM -> YYYYMM, YYYY -> YYYY00 としてソート
         )
         final_cols = ["共通項目"] + year_cols
         result_df = result_df[final_cols]
         for col in year_cols:
-            result_df[col] = result_df[col].astype(int)
+            result_df[col] = pd.to_numeric(result_df[col], errors='coerce').fillna(0).astype(int)
         result_df["共通項目"] = result_df["共通項目"].str.replace(r"_temp_\d+$", "", regex=True)
         final_summaries.append(result_df)
     return final_summaries
