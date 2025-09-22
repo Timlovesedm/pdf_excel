@@ -49,14 +49,14 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
 def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty:
         return None, []
-    # 2002 または 2002/12 の両方を認識
-    year_pat = re.compile(r"^\s*20\d{2}(?:/\d{2})?\s*$")
+    # 2002 や 2002/12 の両方を認識できるように正規表現を修正
+    year_pat = re.compile(r"^\s*20\d{2}(?:/\d{1,2})?\s*$") # ← 修正: 月が1桁でも2桁でも対応
     year_cells = []
     for r in range(df_chunk.shape[0]):
         for c in range(df_chunk.shape[1]):
             cell_value = str(df_chunk.iat[r, c])
             if year_pat.match(cell_value):
-                # 2002/12 → 2002
+                # 2002/12 → 2002 のように先頭4桁を年にする
                 year = int(cell_value.strip()[:4])
                 year_cells.append({"row": r, "col": c, "year": year})
 
@@ -240,11 +240,14 @@ with st.container(border=True):
                         df_result.to_excel(writer, index=False, header=False, sheet_name="抽出結果")
                         workbook = writer.book
                         worksheet = writer.sheets["抽出結果"]
+                        # 書式（太字、フォントサイズ20）を定義
                         bold_format = workbook.add_format({"bold": True, "font_size": 20})
-                        # 「ファイル名:」行を太字＆フォント20に
+                        # 「ファイル名:」で始まる行を探して書式を適用
                         for idx, val in enumerate(df_result[0]):
                             if isinstance(val, str) and val.startswith("ファイル名:"):
-                                worksheet.set_row(idx + 1, None, bold_format)
+                                # to_excelはヘッダなしなのでDataFrameのidx行はExcelのidx+1行目。
+                                # set_rowの行番号は0から始まるので、idxを指定する。
+                                worksheet.set_row(idx, None, bold_format) # ← 修正: 行番号をidxに変更
                     st.download_button(
                         label="📥 Excelファイルをダウンロード",
                         data=output.getvalue(),
