@@ -44,14 +44,16 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
     return pd.DataFrame(all_rows)
 
 
-# --- ツール②：統合データ作成関数（応用：YYYY年MM月 形式にも対応）---
+# --- ツール②：統合データ作成関数（応用：「自 YYYY年MM月」形式にも対応）---
 def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty:
         return None, []
     
-    # パターン①：(YYYY年MM月... 形式を認識
+    # パターン①：「(自 YYYY年MM月...」形式を認識
+    from_date_pat = re.compile(r"\(自\s*(\d{4})年(\d{1,2})月")
+    # パターン②：「(YYYY年MM月...」形式を認識
     date_pat = re.compile(r"\((\d{4})年(\d{1,2})月") 
-    # パターン②：2024 (4桁) または 202401 (6桁) の数値を認識
+    # パターン③：2024 (4桁) または 202401 (6桁) の数値を認識
     year_pat = re.compile(r"^\s*20\d{2}(\d{2})?\s*$")
 
     year_cells = []
@@ -60,14 +62,21 @@ def tool2_extract_data_from_chunk(df_chunk):
             cell_value = str(df_chunk.iat[r, c]).strip()
             year_header = None # 見つかったヘッダーを格納する変数
 
-            # まずパターン①（YYYY年MM月）を探す
-            match = date_pat.search(cell_value)
-            if match:
-                year = match.group(1)  # "2021"
-                month = match.group(2) # "12"
-                year_header = f"{year}/{month}" # "2021/12" という文字列を作成
+            # パターン①「(自 YYYY年MM月...」を探す
+            match1 = from_date_pat.search(cell_value)
+            # パターン②「(YYYY年MM月...」を探す
+            match2 = date_pat.search(cell_value)
+
+            if match1:
+                year = match1.group(1)  # "2021"
+                month = match1.group(2) # "4"
+                year_header = f"{year}/{month}" # "2021/4" という文字列を作成
+            elif match2:
+                year = match2.group(1)
+                month = match2.group(2)
+                year_header = f"{year}/{month}"
             
-            # パターン①で見つからなければ、次にパターン②（4桁/6桁の数値）を探す
+            # 上記パターンで見つからなければ、次にパターン③（4桁/6桁の数値）を探す
             elif cell_value.isdigit() and year_pat.match(cell_value):
                 year_header = cell_value
 
@@ -262,18 +271,16 @@ with st.container(border=True):
                             if isinstance(val, str) and val.startswith("ファイル名:"):
                                 worksheet.set_row(idx, None, bold_format)
                     
-                    # --- ここからファイル名修正 ---
                     if keywords:
                         base_name = '_'.join(keywords)
                         download_filename = f"{base_name}_まとめ.xlsx"
                     else:
                         download_filename = "抽出結果_まとめ.xlsx"
-                    # --- ここまでファイル名修正 ---
 
                     st.download_button(
                         label="📥 Excelファイルをダウンロード",
                         data=output.getvalue(),
-                        file_name=download_filename, # ← ファイル名修正
+                        file_name=download_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
         else:
@@ -297,18 +304,16 @@ with st.container(border=True):
                             writer, sheet_name=f"統合まとめ表_{i+1}", index=False
                         )
 
-                # --- ここからファイル名修正 ---
                 base_name_input = excel_file.name.rsplit('.xlsx', 1)[0]
                 if base_name_input.endswith('_まとめ'):
                     base_name_output = base_name_input.removesuffix('_まとめ') + '_統合'
                 else:
                     base_name_output = base_name_input + '_統合'
                 download_filename = f"{base_name_output}.xlsx"
-                # --- ここまでファイル名修正 ---
 
                 st.download_button(
                     label="📥 統合まとめ表をダウンロード",
                     data=output_excel.getvalue(),
-                    file_name=download_filename, # ← ファイル名修正
+                    file_name=download_filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
