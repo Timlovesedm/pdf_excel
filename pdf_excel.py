@@ -12,7 +12,6 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
         st.error("❗ キーワードが入力されていません。", icon="🚨")
         return None
     for pdf_file in pdf_files:
-        # PDFファイル名を出力
         all_rows.append([f"ファイル名: {pdf_file.name}"])
         all_rows.append([])
         found_in_file = False
@@ -45,22 +44,21 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
     return pd.DataFrame(all_rows)
 
 
-# --- ツール②：統合データ作成関数（年号認識を4桁/6桁に対応）---
+# --- ツール②：統合データ作成関数（認識した年月の文字列をそのまま使用）---
 def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty:
         return None, []
-    # 2024 (4桁) または 202401 (6桁) の両方を認識できるように正規表現を修正
-    year_pat = re.compile(r"^\s*20\d{2}(\d{2})?\s*$") # ← 修正
+    # 2024 (4桁) または 202401 (6桁) の両方を認識
+    year_pat = re.compile(r"^\s*20\d{2}(\d{2})?\s*$")
     year_cells = []
     for r in range(df_chunk.shape[0]):
         for c in range(df_chunk.shape[1]):
-            cell_value = str(df_chunk.iat[r, c]).strip() # .strip() を追加して前後の空白を除去
-            # セル値が数値に見えるかチェックを追加
+            cell_value = str(df_chunk.iat[r, c]).strip()
             if cell_value.isdigit():
                 if year_pat.match(cell_value):
-                    # 202401 → 2024 のように先頭4桁を年にする
-                    year = int(cell_value[:4])
-                    year_cells.append({"row": r, "col": c, "year": year})
+                    # 認識した文字列をそのままヘッダーとして使用する
+                    year_header = cell_value
+                    year_cells.append({"row": r, "col": c, "year_header": year_header})
 
     if not year_cells:
         return None, []
@@ -69,7 +67,6 @@ def tool2_extract_data_from_chunk(df_chunk):
     processed_years = set()
     initial_items = df_chunk[0].astype(str).str.strip().dropna()
     initial_items = initial_items[initial_items != ""]
-    # 「その他」重複対応
     is_sonota = initial_items == "その他"
     if is_sonota.any():
         sonota_counts = initial_items.groupby(initial_items).cumcount()
@@ -78,21 +75,21 @@ def tool2_extract_data_from_chunk(df_chunk):
     df_result = pd.DataFrame({"共通項目": all_items_ordered})
 
     for cell in year_cells:
-        year = cell["year"]
-        if year in processed_years:
+        year_header = cell["year_header"]
+        if year_header in processed_years:
             continue
-        processed_years.add(year)
+        processed_years.add(year_header)
         val_col = cell["col"]
         temp_df = df_chunk.iloc[cell["row"] + 1 :, [0, val_col]].copy()
-        temp_df.columns = ["共通項目", year]
+        temp_df.columns = ["共通項目", year_header]
         temp_df["共通項目"] = temp_df["共通項目"].astype(str).str.strip()
         temp_df = temp_df[temp_df["共通項目"] != ""].dropna(subset=["共通項目"])
         is_sonota = temp_df["共通項目"] == "その他"
         if is_sonota.any():
             sonota_counts = temp_df.groupby("共通項目").cumcount()
             temp_df.loc[is_sonota, "共通項目"] = "その他_temp_" + sonota_counts[is_sonota].astype(str)
-        temp_df[year] = (
-            pd.to_numeric(temp_df[year].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
+        temp_df[year_header] = (
+            pd.to_numeric(temp_df[year_header].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
         )
         temp_df = temp_df.drop_duplicates(subset=["共通項目"], keep="first")
         df_result = pd.merge(df_result, temp_df, on="共通項目", how="left")
@@ -109,8 +106,9 @@ def tool2_calculate_yoy(df):
     df_pct = df_yoy.pct_change(axis=1) * 100
     df_pct.columns = [f"{col} 増減率(%)" for col in df_pct.columns]
     df_merged = pd.concat([df_yoy, df_diff, df_pct], axis=1)
+    # 文字列の列名を数値としてソート
+    year_cols = sorted([col for col in df_yoy.columns if str(col).isdigit()], key=int)
     sorted_cols = []
-    year_cols = sorted([col for col in df_yoy.columns if isinstance(col, int)])
     for year in year_cols:
         sorted_cols.append(year)
         if f"{year} 増減額" in df_merged.columns:
@@ -201,7 +199,11 @@ def process_files_and_tables(excel_file):
                 result_df, df_to_merge.drop(columns=cols_to_drop), on="共通項目", how="left"
             )
         result_df.fillna(0, inplace=True)
-        year_cols = sorted([col for col in result_df.columns if isinstance(col, int)], key=int)
+        # 列名が文字列の数字になったため、数値として正しくソートするよう変更
+        year_cols = sorted(
+            [col for col in result_df.columns if str(col).isdigit() and col != "共通項目"],
+            key=int,
+        )
         final_cols = ["共通項目"] + year_cols
         result_df = result_df[final_cols]
         for col in year_cols:
@@ -242,14 +244,10 @@ with st.container(border=True):
                         df_result.to_excel(writer, index=False, header=False, sheet_name="抽出結果")
                         workbook = writer.book
                         worksheet = writer.sheets["抽出結果"]
-                        # 書式（太字、フォントサイズ20）を定義
                         bold_format = workbook.add_format({"bold": True, "font_size": 20})
-                        # 「ファイル名:」で始まる行を探して書式を適用
                         for idx, val in enumerate(df_result[0]):
                             if isinstance(val, str) and val.startswith("ファイル名:"):
-                                # to_excelはヘッダなしなのでDataFrameのidx行はExcelのidx+1行目。
-                                # set_rowの行番号は0から始まるので、idxを指定する。
-                                worksheet.set_row(idx, None, bold_format) # ← 修正: 行番号をidxに変更
+                                worksheet.set_row(idx, None, bold_format)
                     st.download_button(
                         label="📥 Excelファイルをダウンロード",
                         data=output.getvalue(),
@@ -282,4 +280,3 @@ with st.container(border=True):
                     file_name=f"統合まとめ表_{excel_file.name}",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-
