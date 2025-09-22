@@ -45,20 +45,22 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
     return pd.DataFrame(all_rows)
 
 
-# --- ツール②：統合データ作成関数（年号認識を4桁/4桁+2桁に対応）---
+# --- ツール②：統合データ作成関数（年号認識を4桁/6桁に対応）---
 def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty:
         return None, []
-    # 2002 や 2002/12 の両方を認識できるように正規表現を修正
-    year_pat = re.compile(r"^\s*20\d{2}(?:/\d{1,2})?\s*$") # ← 修正: 月が1桁でも2桁でも対応
+    # 2024 (4桁) または 202401 (6桁) の両方を認識できるように正規表現を修正
+    year_pat = re.compile(r"^\s*20\d{2}(\d{2})?\s*$") # ← 修正
     year_cells = []
     for r in range(df_chunk.shape[0]):
         for c in range(df_chunk.shape[1]):
-            cell_value = str(df_chunk.iat[r, c])
-            if year_pat.match(cell_value):
-                # 2002/12 → 2002 のように先頭4桁を年にする
-                year = int(cell_value.strip()[:4])
-                year_cells.append({"row": r, "col": c, "year": year})
+            cell_value = str(df_chunk.iat[r, c]).strip() # .strip() を追加して前後の空白を除去
+            # セル値が数値に見えるかチェックを追加
+            if cell_value.isdigit():
+                if year_pat.match(cell_value):
+                    # 202401 → 2024 のように先頭4桁を年にする
+                    year = int(cell_value[:4])
+                    year_cells.append({"row": r, "col": c, "year": year})
 
     if not year_cells:
         return None, []
@@ -280,3 +282,4 @@ with st.container(border=True):
                     file_name=f"統合まとめ表_{excel_file.name}",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
