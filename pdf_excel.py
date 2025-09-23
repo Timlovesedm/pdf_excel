@@ -206,7 +206,7 @@ def process_files_and_tables(excel_file):
                     master_item_order[i].extend(item_order)
                 else:
                     last_known_index = -1
-                    for item in order_item:
+                    for item in item_order:
                         if item in current_master_order:
                             last_known_index = current_master_order.index(item)
                         else:
