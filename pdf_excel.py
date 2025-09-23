@@ -44,16 +44,18 @@ def extract_tables_from_multiple_pdfs(pdf_files, keywords, start_page, end_page)
     return pd.DataFrame(all_rows)
 
 
-# --- ツール②：統合データ作成関数（応用：「自 YYYY年MM月」形式にも対応）---
+# --- ツール②：統合データ作成関数（応用：「YYYYQZ」形式にも対応）---
 def tool2_extract_data_from_chunk(df_chunk):
     if df_chunk.empty:
         return None, []
     
-    # パターン①：「(自 YYYY年MM月...」形式を認識
+    # パターン①：「YYYYQZ」 (年+四半期) 形式を認識 (例: 2024Q1, 2025Q3)
+    quarter_pat = re.compile(r"^\s*(20\d{2}Q[1-4])\s*$", re.IGNORECASE)
+    # パターン②：「(自 YYYY年MM月...」形式を認識
     from_date_pat = re.compile(r"\(自\s*(\d{4})年(\d{1,2})月")
-    # パターン②：「(YYYY年MM月...」形式を認識
+    # パターン③：「(YYYY年MM月...」形式を認識
     date_pat = re.compile(r"\((\d{4})年(\d{1,2})月") 
-    # パターン③：2024 (4桁) または 202401 (6桁) の数値を認識
+    # パターン④：2024 (4桁) または 202401 (6桁) の数値を認識
     year_pat = re.compile(r"^\s*20\d{2}(\d{2})?\s*$")
 
     year_cells = []
@@ -62,21 +64,25 @@ def tool2_extract_data_from_chunk(df_chunk):
             cell_value = str(df_chunk.iat[r, c]).strip()
             year_header = None # 見つかったヘッダーを格納する変数
 
-            # パターン①「(自 YYYY年MM月...」を探す
+            # パターン①「YYYYQZ」を探す
+            match_q = quarter_pat.search(cell_value)
+            # パターン②「(自 YYYY年MM月...」を探す
             match1 = from_date_pat.search(cell_value)
-            # パターン②「(YYYY年MM月...」を探す
+            # パターン③「(YYYY年MM月...」を探す
             match2 = date_pat.search(cell_value)
 
-            if match1:
-                year = match1.group(1)  # "2021"
-                month = match1.group(2) # "4"
-                year_header = f"{year}/{month}" # "2021/4" という文字列を作成
+            if match_q:
+                year_header = match_q.group(1).upper() # "2024q3" -> "2024Q3" のように大文字に統一
+            elif match1:
+                year = match1.group(1)
+                month = match1.group(2)
+                year_header = f"{year}/{month}"
             elif match2:
                 year = match2.group(1)
                 month = match2.group(2)
                 year_header = f"{year}/{month}"
             
-            # 上記パターンで見つからなければ、次にパターン③（4桁/6桁の数値）を探す
+            # 上記パターンで見つからなければ、次にパターン④（4桁/6桁の数値）を探す
             elif cell_value.isdigit() and year_pat.match(cell_value):
                 year_header = cell_value
 
@@ -113,7 +119,7 @@ def tool2_extract_data_from_chunk(df_chunk):
             sonota_counts = temp_df.groupby("共通項目").cumcount()
             temp_df.loc[is_sonota, "共通項目"] = "その他_temp_" + sonota_counts[is_sonota].astype(str)
         temp_df[year_header] = (
-            pd.to_numeric(temp_df[year_header].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
+            pd.to_numeric(temp_df[year_header].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
         )
         temp_df = temp_df.drop_duplicates(subset=["共通項目"], keep="first")
         df_result = pd.merge(df_result, temp_df, on="共通項目", how="left")
@@ -200,7 +206,7 @@ def process_files_and_tables(excel_file):
                     master_item_order[i].extend(item_order)
                 else:
                     last_known_index = -1
-                    for item in item_order:
+                    for item in order_item:
                         if item in current_master_order:
                             last_known_index = current_master_order.index(item)
                         else:
@@ -222,9 +228,11 @@ def process_files_and_tables(excel_file):
                 result_df, df_to_merge.drop(columns=cols_to_drop), on="共通項目", how="left"
             )
         result_df.fillna(0, inplace=True)
+        # YYYY/MM や YYYYQZ 形式もソート対象にする
         year_cols = sorted(
             [col for col in result_df.columns if col != "共通項目"],
-            key=lambda x: int(str(x).replace('/', '').ljust(6, '0'))
+            # YYYY/MM -> YYYYMM, YYYY -> YYYY00, YYYYQZ -> YYYY0Z のように変換してソート
+            key=lambda x: int(str(x).upper().replace('/', '').replace('Q', '0').ljust(6, '0'))
         )
         final_cols = ["共通項目"] + year_cols
         result_df = result_df[final_cols]
